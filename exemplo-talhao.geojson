@@ -1,0 +1,22 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "nome": "Talhão Exemplo - Rondonópolis/MT" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-54.6305, -16.4748],
+            [-54.6092, -16.4761],
+            [-54.6075, -16.4658],
+            [-54.6240, -16.4632],
+            [-54.6312, -16.4690],
+            [-54.6305, -16.4748]
+          ]
+        ]
+      }
+    }
+  ]
+}
