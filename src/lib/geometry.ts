@@ -2,10 +2,13 @@ import * as turf from "@turf/turf";
 
 export type LngLat = [number, number];
 
-/** Monta um polígono fechado a partir dos cantos clicados. */
-export function buildPolygon(pts: LngLat[]) {
-  const ring = [...pts, pts[0]];
-  return turf.polygon([ring]);
+/** Monta um polígono a partir dos cantos, com obstáculos (furos) opcionais. */
+export function buildPolygon(pts: LngLat[], holes: LngLat[][] = []) {
+  const rings: LngLat[][] = [[...pts, pts[0]]];
+  for (const h of holes) {
+    if (h.length >= 3) rings.push([...h, h[0]]);
+  }
+  return turf.polygon(rings as any);
 }
 
 export type PlanMetrics = {

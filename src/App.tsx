@@ -40,7 +40,7 @@ const SAT_STYLE: any = {
 };
 
 const EMPTY: any = { type: "FeatureCollection", features: [] };
-type Mode = "idle" | "field" | "ab";
+type Mode = "idle" | "field" | "ab" | "obstacle";
 
 export default function App() {
   const mapDiv = useRef<HTMLDivElement>(null);
@@ -49,6 +49,8 @@ export default function App() {
   const fieldRef = useRef<LngLat[]>([]);
   const abRef = useRef<LngLat[]>([]);
   const closedRef = useRef(false);
+  const obstaclesRef = useRef<LngLat[][]>([]);
+  const currentObsRef = useRef<LngLat[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastPlanRef = useRef<any>(null);
 
@@ -90,7 +92,16 @@ export default function App() {
     map.addControl(new maplibregl.NavigationControl(), "top-right");
 
     map.on("load", () => {
-      for (const id of ["headland", "field", "swaths", "preview", "ab", "pts"]) {
+      for (const id of [
+        "headland",
+        "field",
+        "obstacles",
+        "swaths",
+        "preview",
+        "ab",
+        "obsdraw",
+        "pts",
+      ]) {
         map.addSource(id, { type: "geojson", data: EMPTY });
       }
       map.addLayer({
@@ -129,6 +140,37 @@ export default function App() {
         },
       });
       map.addLayer({
+        id: "obstacles-fill",
+        type: "fill",
+        source: "obstacles",
+        paint: { "fill-color": "#e5484d", "fill-opacity": 0.3 },
+      });
+      map.addLayer({
+        id: "obstacles-line",
+        type: "line",
+        source: "obstacles",
+        paint: { "line-color": "#e5484d", "line-width": 2 },
+      });
+      map.addLayer({
+        id: "obsdraw-line",
+        type: "line",
+        source: "obsdraw",
+        filter: ["==", "$type", "LineString"],
+        paint: { "line-color": "#ff7a7a", "line-width": 2, "line-dasharray": [2, 2] },
+      });
+      map.addLayer({
+        id: "obsdraw-pts",
+        type: "circle",
+        source: "obsdraw",
+        filter: ["==", "$type", "Point"],
+        paint: {
+          "circle-radius": 4,
+          "circle-color": "#ff7a7a",
+          "circle-stroke-color": "#222",
+          "circle-stroke-width": 1.5,
+        },
+      });
+      map.addLayer({
         id: "ab-line",
         type: "line",
         source: "ab",
@@ -163,6 +205,9 @@ export default function App() {
           setData("preview", EMPTY);
           generate();
         }
+      } else if (modeRef.current === "obstacle") {
+        currentObsRef.current.push(ll);
+        drawObstacles();
       }
     });
 
@@ -175,6 +220,12 @@ export default function App() {
         const a = abRef.current[0];
         setData("preview", lineFeat([a, ll]));
         livePreview(a, ll);
+      } else if (
+        modeRef.current === "obstacle" &&
+        currentObsRef.current.length >= 1
+      ) {
+        const last = currentObsRef.current[currentObsRef.current.length - 1];
+        setData("preview", lineFeat([last, ll]));
       }
     });
 
@@ -260,6 +311,33 @@ export default function App() {
     });
   }
 
+  function drawObstacles() {
+    const committed = obstaclesRef.current
+      .filter((o) => o.length >= 3)
+      .map((o) => ({
+        type: "Feature",
+        properties: {},
+        geometry: { type: "Polygon", coordinates: [[...o, o[0]]] },
+      }));
+    setData("obstacles", { type: "FeatureCollection", features: committed });
+    const cur = currentObsRef.current;
+    const feats: any[] = [];
+    if (cur.length >= 2)
+      feats.push({
+        type: "Feature",
+        properties: {},
+        geometry: { type: "LineString", coordinates: cur },
+      });
+    cur.forEach((p) =>
+      feats.push({
+        type: "Feature",
+        properties: {},
+        geometry: { type: "Point", coordinates: p },
+      })
+    );
+    setData("obsdraw", { type: "FeatureCollection", features: feats });
+  }
+
   function lineFeat(coords: LngLat[]) {
     return {
       type: "Feature",
@@ -275,7 +353,7 @@ export default function App() {
     if (now - previewTsRef.current < 90) return;
     previewTsRef.current = now;
     try {
-      const poly = buildPolygon(fieldRef.current);
+      const poly = buildPolygon(fieldRef.current, obstaclesRef.current);
       const res = generatePlan(poly, a, b, spacingRef.current, headlandRef.current);
       setData("swaths", { type: "FeatureCollection", features: res.swaths });
       setData("headland", res.headlandBand ?? EMPTY);
@@ -285,6 +363,13 @@ export default function App() {
   }
 
   function undoLast() {
+    if (modeRef.current === "obstacle" && currentObsRef.current.length > 0) {
+      currentObsRef.current.pop();
+      setData("preview", EMPTY);
+      drawObstacles();
+      setMsg("Ponto do obstáculo removido.");
+      return;
+    }
     if (modeRef.current === "ab" && abRef.current.length > 0) {
       abRef.current.pop();
       drawAB();
@@ -337,12 +422,49 @@ export default function App() {
     drawAB();
     setMsg("Clique no ponto A → mova o mouse e veja as linhas ao vivo → clique no B.");
   }
+
+  function startObstacle() {
+    if (!closedRef.current) {
+      setMsg("Feche o talhão primeiro.");
+      return;
+    }
+    setModeBoth("obstacle");
+    currentObsRef.current = [];
+    setData("preview", EMPTY);
+    drawObstacles();
+    setMsg("Clique em volta do obstáculo (rio/benfeitoria), depois 'Fechar obstáculo'.");
+  }
+
+  function closeObstacle() {
+    if (currentObsRef.current.length < 3) {
+      setMsg("Marque pelo menos 3 pontos no obstáculo.");
+      return;
+    }
+    obstaclesRef.current = [...obstaclesRef.current, currentObsRef.current];
+    currentObsRef.current = [];
+    setModeBoth("idle");
+    setData("preview", EMPTY);
+    drawObstacles();
+    if (abRef.current.length === 2) generate();
+    setMsg("Obstáculo adicionado ✔ As linhas foram recortadas em volta.");
+  }
   function clearAll() {
     fieldRef.current = [];
     abRef.current = [];
+    obstaclesRef.current = [];
+    currentObsRef.current = [];
     closedRef.current = false;
     setModeBoth("idle");
-    for (const id of ["field", "pts", "ab", "swaths", "headland", "preview"])
+    for (const id of [
+      "field",
+      "pts",
+      "ab",
+      "swaths",
+      "headland",
+      "preview",
+      "obstacles",
+      "obsdraw",
+    ])
       setData(id, EMPTY);
     setMetrics(null);
     setMsg("Comece desenhando o talhão.");
@@ -558,7 +680,7 @@ export default function App() {
       return;
     }
     try {
-      const poly = buildPolygon(fieldRef.current);
+      const poly = buildPolygon(fieldRef.current, obstaclesRef.current);
       const res = generatePlan(
         poly,
         abRef.current[0],
@@ -692,6 +814,12 @@ export default function App() {
           </button>
           <button onClick={suggestBestDirection} style={btn(false)}>
             🧭 Sugerir melhor direção
+          </button>
+          <button onClick={startObstacle} style={btn(mode === "obstacle")}>
+            🚧 Adicionar obstáculo
+          </button>
+          <button onClick={closeObstacle} style={btn(false)}>
+            Fechar obstáculo
           </button>
         </div>
 
