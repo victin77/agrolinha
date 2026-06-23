@@ -20,9 +20,12 @@ import {
 import {
   loadFazendas,
   saveFazendas,
+  loadCloudFazendas,
+  saveCloudFazendas,
   type Fazenda,
   type Talhao,
 } from "./lib/projects";
+import { supabase } from "./lib/supabase";
 
 // Imagem de satélite gratuita (Esri World Imagery) — sem chave de API
 const SAT_STYLE: any = {
@@ -81,6 +84,12 @@ export default function App() {
     { kind: "fazenda" | "talhao"; id: string; nome: string; fazendaId?: string } | null
   >(null);
   const [renameText, setRenameText] = useState("");
+  const [user, setUser] = useState<any>(null);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPass, setAuthPass] = useState("");
+  const [authMode, setAuthMode] = useState<"in" | "up">("in");
+  const [authMsg, setAuthMsg] = useState("");
 
   useEffect(() => {
     if (mapRef.current || !mapDiv.current) return;
@@ -277,6 +286,20 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      const u = data.session?.user ?? null;
+      setUser(u);
+      if (u) syncFromCloud(u.id);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+      const u = session?.user ?? null;
+      setUser(u);
+      if (u) syncFromCloud(u.id);
+    });
+    return () => sub.subscription.unsubscribe();
   }, []);
 
   function src(id: string) {
@@ -547,6 +570,50 @@ export default function App() {
   function persistFazendas(list: Fazenda[]) {
     setFazendas(list);
     saveFazendas(list);
+    if (user) saveCloudFazendas(user.id, list);
+  }
+
+  async function syncFromCloud(userId: string) {
+    const cloud = await loadCloudFazendas();
+    if (cloud && cloud.length > 0) {
+      setFazendas(cloud);
+      saveFazendas(cloud);
+      setMsg("Fazendas carregadas da nuvem ☁");
+    } else {
+      const local = loadFazendas();
+      if (local.length > 0) {
+        await saveCloudFazendas(userId, local);
+        setMsg("Suas fazendas locais foram salvas na nuvem ☁");
+      }
+    }
+  }
+
+  async function submitAuth() {
+    if (!authEmail || authPass.length < 6) {
+      setAuthMsg("Informe e-mail e senha (mín. 6 caracteres).");
+      return;
+    }
+    setAuthMsg("Aguarde...");
+    const res =
+      authMode === "in"
+        ? await supabase.auth.signInWithPassword({
+            email: authEmail,
+            password: authPass,
+          })
+        : await supabase.auth.signUp({ email: authEmail, password: authPass });
+    if (res.error) {
+      setAuthMsg(res.error.message);
+      return;
+    }
+    if (authMode === "up" && !res.data.session) {
+      setAuthMsg("Conta criada! Confirme pelo e-mail e depois entre.");
+      setAuthMode("in");
+      return;
+    }
+    setAuthOpen(false);
+    setAuthEmail("");
+    setAuthPass("");
+    setAuthMsg("");
   }
 
   function createFazenda() {
@@ -847,6 +914,39 @@ export default function App() {
         </div>
         <div style={{ fontSize: 11.5, color: "#8a929c", marginBottom: 4 }}>
           Planejamento de linhas de plantio e pulverização
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 10 }}>
+          {user ? (
+            <>
+              <span
+                style={{
+                  fontSize: 11.5,
+                  color: "#7ee787",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                ☁ {user.email}
+              </span>
+              <button
+                onClick={() => supabase.auth.signOut()}
+                style={{ ...miniBtn, marginLeft: "auto" }}
+              >
+                Sair
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => {
+                setAuthOpen(true);
+                setAuthMsg("");
+              }}
+              style={{ ...miniBtn, width: "100%", textAlign: "center" }}
+            >
+              ☁ Entrar / criar conta (salvar na nuvem)
+            </button>
+          )}
         </div>
         <div className="section-label" style={{ marginTop: 12 }}>
           1 · Talhão
@@ -1349,6 +1449,68 @@ export default function App() {
                 }}
               >
                 Salvar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {authOpen && (
+        <div style={overlayStyle} onClick={() => setAuthOpen(false)}>
+          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, color: "#fff" }}>
+              ☁ {authMode === "in" ? "Entrar na nuvem" : "Criar conta"}
+            </div>
+            <div style={{ fontSize: 12, color: "#8a929c", marginBottom: 12 }}>
+              Salve suas fazendas e acesse de qualquer dispositivo.
+            </div>
+            <input
+              placeholder="seu@email.com"
+              value={authEmail}
+              onChange={(e) => setAuthEmail(e.target.value)}
+              style={{ ...inp, marginBottom: 8 }}
+            />
+            <input
+              type="password"
+              placeholder="senha (mín. 6)"
+              value={authPass}
+              onChange={(e) => setAuthPass(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submitAuth()}
+              style={{ ...inp, marginBottom: 8 }}
+            />
+            {authMsg && (
+              <div style={{ fontSize: 12, color: "#ff9a6a", marginBottom: 8 }}>
+                {authMsg}
+              </div>
+            )}
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <button
+                onClick={() => setAuthMode(authMode === "in" ? "up" : "in")}
+                style={miniBtn}
+              >
+                {authMode === "in" ? "Criar conta" : "Já tenho conta"}
+              </button>
+              <button
+                onClick={submitAuth}
+                style={{
+                  width: "auto",
+                  padding: "8px 18px",
+                  borderRadius: 8,
+                  border: "none",
+                  fontWeight: 700,
+                  background: "#ffb24a",
+                  color: "#1a1a1a",
+                  cursor: "pointer",
+                }}
+              >
+                {authMode === "in" ? "Entrar" : "Criar"}
               </button>
             </div>
           </div>

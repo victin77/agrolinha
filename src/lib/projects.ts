@@ -51,3 +51,23 @@ export function loadFazendas(): Fazenda[] {
 export function saveFazendas(list: Fazenda[]) {
   localStorage.setItem(KEY, JSON.stringify(list));
 }
+
+// ---- Nuvem (Supabase) ----
+import { supabase } from "./supabase";
+
+export async function loadCloudFazendas(): Promise<Fazenda[] | null> {
+  const { data, error } = await supabase
+    .from("user_fazendas")
+    .select("data")
+    .maybeSingle();
+  if (error || !data) return null;
+  return (data.data as Fazenda[]) ?? [];
+}
+
+export async function saveCloudFazendas(userId: string, list: Fazenda[]) {
+  await supabase.from("user_fazendas").upsert({
+    user_id: userId,
+    data: list,
+    updated_at: new Date().toISOString(),
+  });
+}
