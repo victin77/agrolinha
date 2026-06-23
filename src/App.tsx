@@ -6,6 +6,7 @@ import {
   generatePlan,
   generateCurvePlan,
   bestDirectionAB,
+  overlapRatio,
   type LngLat,
 } from "./lib/geometry";
 import shp from "shpjs";
@@ -90,6 +91,9 @@ export default function App() {
   const [authPass, setAuthPass] = useState("");
   const [authMode, setAuthMode] = useState<"in" | "up">("in");
   const [authMsg, setAuthMsg] = useState("");
+  const [dupConflict, setDupConflict] = useState<
+    { novo: Talhao; existingId: string; existingNome: string } | null
+  >(null);
 
   useEffect(() => {
     if (mapRef.current || !mapDiv.current) return;
@@ -640,7 +644,7 @@ export default function App() {
     }
     const fz = fazendas.find((f) => f.id === activeFazendaId);
     const nome = talhaoNome.trim() || `Talhão ${(fz?.talhoes.length ?? 0) + 1}`;
-    const t: Talhao = {
+    const novo: Talhao = {
       id: Date.now().toString(36),
       nome,
       field: fieldRef.current,
@@ -654,13 +658,46 @@ export default function App() {
       precoLitro,
       savedAt: Date.now(),
     };
+    // detecta talhão já existente na mesma área
+    const conflito = fz?.talhoes.find(
+      (t) => overlapRatio(novo.field, t.field) > 0.3
+    );
+    if (conflito) {
+      setDupConflict({
+        novo,
+        existingId: conflito.id,
+        existingNome: conflito.nome,
+      });
+      return;
+    }
+    doSaveTalhao(novo);
+  }
+
+  function doSaveTalhao(novo: Talhao) {
     persistFazendas(
       fazendas.map((f) =>
-        f.id === activeFazendaId ? { ...f, talhoes: [t, ...f.talhoes] } : f
+        f.id === activeFazendaId ? { ...f, talhoes: [novo, ...f.talhoes] } : f
       )
     );
     setTalhaoNome("");
-    setMsg(`Talhão "${nome}" salvo ✔`);
+    setMsg(`Talhão "${novo.nome}" salvo ✔`);
+  }
+
+  function updateExistingTalhao(novo: Talhao, existingId: string) {
+    persistFazendas(
+      fazendas.map((f) =>
+        f.id === activeFazendaId
+          ? {
+              ...f,
+              talhoes: f.talhoes.map((t) =>
+                t.id === existingId ? { ...novo, id: existingId } : t
+              ),
+            }
+          : f
+      )
+    );
+    setTalhaoNome("");
+    setMsg("Talhão atualizado ✔");
   }
 
   function loadTalhao(t: Talhao) {
@@ -1511,6 +1548,56 @@ export default function App() {
                 }}
               >
                 {authMode === "in" ? "Entrar" : "Criar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dupConflict && (
+        <div style={overlayStyle} onClick={() => setDupConflict(null)}>
+          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: "#fff" }}>
+              ⚠ Opa, já existe um talhão aqui!
+            </div>
+            <div style={{ fontSize: 13.5, color: "#bcbcc4", marginBottom: 12, lineHeight: 1.5 }}>
+              O talhão{" "}
+              <b style={{ color: "#ff9a6a" }}>{dupConflict.existingNome}</b> já
+              ocupa essa mesma área. Você não pode ter dois talhões no mesmo lugar.
+            </div>
+            <div style={{ display: "grid", gap: 8 }}>
+              <button
+                onClick={() => {
+                  updateExistingTalhao(dupConflict.novo, dupConflict.existingId);
+                  setDupConflict(null);
+                }}
+                style={{
+                  width: "100%",
+                  padding: "9px",
+                  borderRadius: 8,
+                  border: "none",
+                  fontWeight: 700,
+                  background: "#ffb24a",
+                  color: "#1a1a1a",
+                  cursor: "pointer",
+                }}
+              >
+                Atualizar "{dupConflict.existingNome}" com este desenho
+              </button>
+              <button
+                onClick={() => {
+                  doSaveTalhao(dupConflict.novo);
+                  setDupConflict(null);
+                }}
+                style={{ ...btn(false), width: "100%", textAlign: "center" }}
+              >
+                Salvar como novo mesmo assim
+              </button>
+              <button
+                onClick={() => setDupConflict(null)}
+                style={{ ...btn(false), width: "100%", textAlign: "center" }}
+              >
+                Cancelar
               </button>
             </div>
           </div>

@@ -11,6 +11,22 @@ export function buildPolygon(pts: LngLat[], holes: LngLat[][] = []) {
   return turf.polygon(rings as any);
 }
 
+/** Quanto dois talhões se sobrepõem (0 a 1, fração da área do menor). */
+export function overlapRatio(a: LngLat[], b: LngLat[]): number {
+  if (a.length < 3 || b.length < 3) return 0;
+  try {
+    const pa = turf.polygon([[...a, a[0]]]);
+    const pb = turf.polygon([[...b, b[0]]]);
+    const inter = turf.intersect(turf.featureCollection([pa, pb]) as any);
+    if (!inter) return 0;
+    const ia = turf.area(inter);
+    const minA = Math.min(turf.area(pa), turf.area(pb));
+    return minA > 0 ? ia / minA : 0;
+  } catch {
+    return 0;
+  }
+}
+
 export type PlanMetrics = {
   passes: number;
   areaHa: number;
