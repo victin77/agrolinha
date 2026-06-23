@@ -8,6 +8,24 @@
       * { box-sizing: border-box; }
       html, body, #root { margin: 0; height: 100%; width: 100%; }
       body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+      .panel {
+        position: absolute; top: 12px; left: 12px; width: 320px;
+        max-height: calc(100% - 24px); overflow-y: auto;
+        background: rgba(18,20,24,0.94); color: #eaeaea;
+        border-radius: 14px; padding: 16px;
+        box-shadow: 0 10px 34px rgba(0,0,0,0.45);
+        backdrop-filter: blur(6px);
+        border: 1px solid rgba(255,255,255,0.06);
+      }
+      .panel::-webkit-scrollbar { width: 8px; }
+      .panel::-webkit-scrollbar-thumb { background: #3a3d44; border-radius: 8px; }
+      .section-label {
+        font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
+        color: #6f7682; margin: 16px 0 6px; font-weight: 700;
+      }
+      @media (max-width: 680px) {
+        .panel { left: 8px; right: 8px; top: 8px; width: auto; max-height: 52%; }
+      }
     </style>
   </head>
   <body>

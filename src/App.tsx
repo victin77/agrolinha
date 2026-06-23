@@ -841,27 +841,15 @@ export default function App() {
     <div style={{ position: "relative", height: "100%", width: "100%" }}>
       <div ref={mapDiv} style={{ position: "absolute", inset: 0 }} />
 
-      <div
-        style={{
-          position: "absolute",
-          top: 12,
-          left: 12,
-          width: 312,
-          maxHeight: "calc(100% - 24px)",
-          overflowY: "auto",
-          background: "rgba(18,20,24,0.92)",
-          color: "#eaeaea",
-          borderRadius: 12,
-          padding: 16,
-          boxShadow: "0 8px 30px rgba(0,0,0,0.4)",
-          backdropFilter: "blur(4px)",
-        }}
-      >
-        <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 2 }}>
+      <div className="panel">
+        <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 2, letterSpacing: "-0.02em" }}>
           Agro<span style={{ color: "#ffb24a" }}>Linha</span>
         </div>
-        <div style={{ fontSize: 12, color: "#9aa", marginBottom: 14 }}>
-          Planejador de linhas · protótipo Fase 1
+        <div style={{ fontSize: 11.5, color: "#8a929c", marginBottom: 4 }}>
+          Planejamento de linhas de plantio e pulverização
+        </div>
+        <div className="section-label" style={{ marginTop: 12 }}>
+          1 · Talhão
         </div>
 
         <input
@@ -912,7 +900,8 @@ export default function App() {
           </button>
         </div>
 
-        <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
+        <div className="section-label">2 · Parâmetros & economia</div>
+        <div style={{ marginTop: 4, display: "grid", gap: 10 }}>
           <Field label="Espaçamento entre passadas (m)">
             <input
               type="number"
