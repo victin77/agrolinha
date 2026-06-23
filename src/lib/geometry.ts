@@ -104,6 +104,47 @@ export function generatePlan(
   };
 }
 
+/**
+ * Sugere a melhor direção da linha A-B: o rumo que deixa o talhão mais
+ * "estreito" na perpendicular = menos passadas e menos manobra na cabeceira.
+ * Retorna 2 pontos [A, B] passando pelo centro do talhão.
+ */
+export function bestDirectionAB(field: LngLat[]): [LngLat, LngLat] {
+  const lng0 = field.reduce((a, p) => a + p[0], 0) / field.length;
+  const lat0 = field.reduce((a, p) => a + p[1], 0) / field.length;
+  const cosLat = Math.cos((lat0 * Math.PI) / 180);
+  // projeta vértices num plano local em metros
+  const proj = field.map((p) => ({
+    xe: (p[0] - lng0) * cosLat * 111320,
+    yn: (p[1] - lat0) * 110540,
+  }));
+  let bestB = 0;
+  let bestW = Infinity;
+  for (let b = 0; b < 180; b += 2) {
+    const r = (b * Math.PI) / 180;
+    const px = Math.cos(r);
+    const py = -Math.sin(r); // eixo perpendicular ao rumo b
+    let mn = Infinity;
+    let mx = -Infinity;
+    for (const q of proj) {
+      const s = q.xe * px + q.yn * py;
+      if (s < mn) mn = s;
+      if (s > mx) mx = s;
+    }
+    const w = mx - mn;
+    if (w < bestW) {
+      bestW = w;
+      bestB = b;
+    }
+  }
+  const center = turf.point([lng0, lat0]);
+  const A = turf.destination(center, 0.3, bestB + 180, { units: "kilometers" })
+    .geometry.coordinates as LngLat;
+  const B = turf.destination(center, 0.3, bestB, { units: "kilometers" })
+    .geometry.coordinates as LngLat;
+  return [A, B];
+}
+
 /** Recorta uma linha mantendo só os trechos dentro do polígono. */
 function clipLineToPolygon(line: any, polygon: any): any[] {
   try {

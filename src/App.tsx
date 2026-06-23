@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { buildPolygon, generatePlan, type LngLat } from "./lib/geometry";
+import {
+  buildPolygon,
+  generatePlan,
+  bestDirectionAB,
+  type LngLat,
+} from "./lib/geometry";
 import shp from "shpjs";
 import { kml as kmlToGeoJSON } from "@tmcw/togeojson";
 import {
@@ -583,6 +588,20 @@ export default function App() {
     setMsg("KML exportado ✔ (abre no Google Earth)");
   }
 
+  function suggestBestDirection() {
+    if (!closedRef.current || fieldRef.current.length < 3) {
+      setMsg("Desenhe e feche o talhão primeiro.");
+      return;
+    }
+    const [a, b] = bestDirectionAB(fieldRef.current);
+    abRef.current = [a, b];
+    setModeBoth("idle");
+    setData("preview", EMPTY);
+    drawAB();
+    generate();
+    setMsg("Melhor direção aplicada (menos passadas). Ajuste a A-B se quiser.");
+  }
+
   function onExportShapefile() {
     if (!lastPlanRef.current) {
       setMsg("Gere as linhas primeiro.");
@@ -670,6 +689,9 @@ export default function App() {
           </button>
           <button onClick={undoLast} style={btn(false)}>
             ↶ Desfazer último ponto (Ctrl+Z)
+          </button>
+          <button onClick={suggestBestDirection} style={btn(false)}>
+            🧭 Sugerir melhor direção
           </button>
         </div>
 
