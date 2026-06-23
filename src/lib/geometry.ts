@@ -108,6 +108,63 @@ export function generatePlan(
 }
 
 /**
+ * Gera linhas paralelas a uma LINHA CURVA de referência (guidance curve) —
+ * o jeito prático de "curva de nível": o operador desenha a primeira passada
+ * seguindo o relevo e o resto é paralelo a ela.
+ */
+export function generateCurvePlan(
+  polygon: any,
+  curve: LngLat[],
+  spacingM: number,
+  headlandM: number
+): PlanResult {
+  let inner = polygon;
+  if (headlandM > 0) {
+    const buf = turf.buffer(polygon, -headlandM, { units: "meters" });
+    if (buf) inner = buf;
+  }
+  const curveLine = turf.lineString(curve);
+  const bbox = turf.bbox(polygon);
+  const diagKm = turf.distance(
+    turf.point([bbox[0], bbox[1]]),
+    turf.point([bbox[2], bbox[3]]),
+    { units: "kilometers" }
+  );
+  let maxOffsets = Math.ceil((diagKm * 1000) / spacingM) + 2;
+  if (maxOffsets > 800) maxOffsets = 800;
+
+  const swaths: any[] = [];
+  for (let i = -maxOffsets; i <= maxOffsets; i++) {
+    let line: any;
+    if (i === 0) {
+      line = curveLine;
+    } else {
+      try {
+        line = turf.lineOffset(curveLine, (i * spacingM) / 1000, {
+          units: "kilometers",
+        });
+      } catch {
+        continue;
+      }
+    }
+    clipLineToPolygon(line, inner).forEach((c) => swaths.push(c));
+  }
+
+  const areaHa = turf.area(polygon) / 10000;
+  const innerHa = turf.area(inner) / 10000;
+  let totalLenM = 0;
+  for (const s of swaths)
+    totalLenM += turf.length(s, { units: "kilometers" }) * 1000;
+  const coberturaHa = (totalLenM * spacingM) / 10000;
+
+  return {
+    swaths,
+    headlandBand: null,
+    metrics: { passes: swaths.length, areaHa, innerHa, totalLenM, coberturaHa },
+  };
+}
+
+/**
  * Sugere a melhor direção da linha A-B: o rumo que deixa o talhão mais
  * "estreito" na perpendicular = menos passadas e menos manobra na cabeceira.
  * Retorna 2 pontos [A, B] passando pelo centro do talhão.

@@ -4,6 +4,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import {
   buildPolygon,
   generatePlan,
+  generateCurvePlan,
   bestDirectionAB,
   type LngLat,
 } from "./lib/geometry";
@@ -40,7 +41,7 @@ const SAT_STYLE: any = {
 };
 
 const EMPTY: any = { type: "FeatureCollection", features: [] };
-type Mode = "idle" | "field" | "ab" | "obstacle";
+type Mode = "idle" | "field" | "ab" | "obstacle" | "curve";
 
 export default function App() {
   const mapDiv = useRef<HTMLDivElement>(null);
@@ -51,6 +52,7 @@ export default function App() {
   const closedRef = useRef(false);
   const obstaclesRef = useRef<LngLat[][]>([]);
   const currentObsRef = useRef<LngLat[]>([]);
+  const curveRef = useRef<LngLat[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastPlanRef = useRef<any>(null);
 
@@ -99,6 +101,7 @@ export default function App() {
         "swaths",
         "preview",
         "ab",
+        "curve",
         "obsdraw",
         "pts",
       ]) {
@@ -171,6 +174,25 @@ export default function App() {
         },
       });
       map.addLayer({
+        id: "curve-line",
+        type: "line",
+        source: "curve",
+        filter: ["==", "$type", "LineString"],
+        paint: { "line-color": "#7ee787", "line-width": 3 },
+      });
+      map.addLayer({
+        id: "curve-pts",
+        type: "circle",
+        source: "curve",
+        filter: ["==", "$type", "Point"],
+        paint: {
+          "circle-radius": 4,
+          "circle-color": "#7ee787",
+          "circle-stroke-color": "#222",
+          "circle-stroke-width": 1.5,
+        },
+      });
+      map.addLayer({
         id: "ab-line",
         type: "line",
         source: "ab",
@@ -208,6 +230,9 @@ export default function App() {
       } else if (modeRef.current === "obstacle") {
         currentObsRef.current.push(ll);
         drawObstacles();
+      } else if (modeRef.current === "curve") {
+        curveRef.current.push(ll);
+        drawCurve();
       }
     });
 
@@ -225,6 +250,9 @@ export default function App() {
         currentObsRef.current.length >= 1
       ) {
         const last = currentObsRef.current[currentObsRef.current.length - 1];
+        setData("preview", lineFeat([last, ll]));
+      } else if (modeRef.current === "curve" && curveRef.current.length >= 1) {
+        const last = curveRef.current[curveRef.current.length - 1];
         setData("preview", lineFeat([last, ll]));
       }
     });
@@ -338,6 +366,25 @@ export default function App() {
     setData("obsdraw", { type: "FeatureCollection", features: feats });
   }
 
+  function drawCurve() {
+    const cur = curveRef.current;
+    const feats: any[] = [];
+    if (cur.length >= 2)
+      feats.push({
+        type: "Feature",
+        properties: {},
+        geometry: { type: "LineString", coordinates: cur },
+      });
+    cur.forEach((p) =>
+      feats.push({
+        type: "Feature",
+        properties: {},
+        geometry: { type: "Point", coordinates: p },
+      })
+    );
+    setData("curve", { type: "FeatureCollection", features: feats });
+  }
+
   function lineFeat(coords: LngLat[]) {
     return {
       type: "Feature",
@@ -368,6 +415,13 @@ export default function App() {
       setData("preview", EMPTY);
       drawObstacles();
       setMsg("Ponto do obstáculo removido.");
+      return;
+    }
+    if (modeRef.current === "curve" && curveRef.current.length > 0) {
+      curveRef.current.pop();
+      setData("preview", EMPTY);
+      drawCurve();
+      setMsg("Ponto da curva removido.");
       return;
     }
     if (modeRef.current === "ab" && abRef.current.length > 0) {
@@ -418,9 +472,26 @@ export default function App() {
     }
     setModeBoth("ab");
     abRef.current = [];
+    curveRef.current = [];
+    setData("curve", EMPTY);
     setData("preview", EMPTY);
     drawAB();
     setMsg("Clique no ponto A → mova o mouse e veja as linhas ao vivo → clique no B.");
+  }
+
+  function startCurve() {
+    if (!closedRef.current) {
+      setMsg("Feche o talhão primeiro.");
+      return;
+    }
+    abRef.current = [];
+    setData("ab", EMPTY);
+    setModeBoth("curve");
+    curveRef.current = [];
+    setData("curve", EMPTY);
+    setData("preview", EMPTY);
+    drawCurve();
+    setMsg("Clique pontos seguindo o relevo (a 1ª passada), depois 'Gerar linhas'.");
   }
 
   function startObstacle() {
@@ -453,6 +524,7 @@ export default function App() {
     abRef.current = [];
     obstaclesRef.current = [];
     currentObsRef.current = [];
+    curveRef.current = [];
     closedRef.current = false;
     setModeBoth("idle");
     for (const id of [
@@ -464,6 +536,7 @@ export default function App() {
       "preview",
       "obstacles",
       "obsdraw",
+      "curve",
     ])
       setData(id, EMPTY);
     setMetrics(null);
@@ -675,19 +748,30 @@ export default function App() {
       setMsg("Desenhe e feche o talhão primeiro.");
       return;
     }
-    if (abRef.current.length < 2) {
-      setMsg("Defina a linha A-B (2 pontos).");
-      return;
-    }
+    setModeBoth("idle");
+    setData("preview", EMPTY);
+    const poly = buildPolygon(fieldRef.current, obstaclesRef.current);
     try {
-      const poly = buildPolygon(fieldRef.current, obstaclesRef.current);
-      const res = generatePlan(
-        poly,
-        abRef.current[0],
-        abRef.current[1],
-        spacingRef.current,
-        headlandRef.current
-      );
+      let res;
+      if (curveRef.current.length >= 2) {
+        res = generateCurvePlan(
+          poly,
+          curveRef.current,
+          spacingRef.current,
+          headlandRef.current
+        );
+      } else if (abRef.current.length >= 2) {
+        res = generatePlan(
+          poly,
+          abRef.current[0],
+          abRef.current[1],
+          spacingRef.current,
+          headlandRef.current
+        );
+      } else {
+        setMsg("Defina a linha A-B (reta) ou desenhe uma linha curva.");
+        return;
+      }
       setData("swaths", { type: "FeatureCollection", features: res.swaths });
       setData("headland", res.headlandBand ?? EMPTY);
       lastPlanRef.current = res;
@@ -717,6 +801,8 @@ export default function App() {
     }
     const [a, b] = bestDirectionAB(fieldRef.current);
     abRef.current = [a, b];
+    curveRef.current = [];
+    setData("curve", EMPTY);
     setModeBoth("idle");
     setData("preview", EMPTY);
     drawAB();
@@ -820,6 +906,9 @@ export default function App() {
           </button>
           <button onClick={closeObstacle} style={btn(false)}>
             Fechar obstáculo
+          </button>
+          <button onClick={startCurve} style={btn(mode === "curve")}>
+            〰️ Linha curva / relevo → Gerar
           </button>
         </div>
 
