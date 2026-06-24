@@ -46,6 +46,7 @@ const SAT_STYLE: any = {
 
 const EMPTY: any = { type: "FeatureCollection", features: [] };
 type Mode = "idle" | "field" | "ab" | "obstacle" | "curve";
+type Layout = "toolbar" | "wizard" | "sections";
 
 export default function App() {
   const mapDiv = useRef<HTMLDivElement>(null);
@@ -94,6 +95,21 @@ export default function App() {
   const [dupConflict, setDupConflict] = useState<
     { novo: Talhao; existingId: string; existingNome: string } | null
   >(null);
+
+  // ---- layout selecionável (V1 toolbar padrão, V2 wizard, V3 seções) ----
+  const [layout, setLayout] = useState<Layout>(
+    () => (localStorage.getItem("agrolinha:layout") as Layout) || "toolbar"
+  );
+  const [step, setStep] = useState(0); // wizard
+  const [openAcc, setOpenAcc] = useState<Record<number, boolean>>({
+    0: true,
+    1: false,
+    2: true,
+    3: false,
+  });
+  useEffect(() => {
+    localStorage.setItem("agrolinha:layout", layout);
+  }, [layout]);
 
   useEffect(() => {
     if (mapRef.current || !mapDiv.current) return;
@@ -941,480 +957,599 @@ export default function App() {
   const fmt = (n: number, d = 1) =>
     n.toLocaleString("pt-BR", { maximumFractionDigits: d });
 
+  // ===================== BLOCOS REUTILIZÁVEIS DA VIEW =====================
+
+  const fileInput = (
+    <input
+      ref={fileInputRef}
+      type="file"
+      accept=".kml,.geojson,.json,.zip,.shp"
+      style={{ display: "none" }}
+      onChange={(e) => {
+        const f = e.target.files?.[0];
+        if (f) importFromFile(f);
+        e.target.value = "";
+      }}
+    />
+  );
+
+  const header = (
+    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+      <div>
+        <div className="logo">
+          Agro<b>Linha</b>
+        </div>
+        <div className="sub">Planejamento de linhas de plantio</div>
+      </div>
+      <div className="layout-switch">
+        <button className={layout === "toolbar" ? "on" : ""} title="Toolbar flutuante" onClick={() => setLayout("toolbar")}>
+          ⬚
+        </button>
+        <button className={layout === "wizard" ? "on" : ""} title="Passo a passo" onClick={() => setLayout("wizard")}>
+          ⇢
+        </button>
+        <button className={layout === "sections" ? "on" : ""} title="Seções" onClick={() => setLayout("sections")}>
+          ≣
+        </button>
+      </div>
+    </div>
+  );
+
+  const authRow = (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 10 }}>
+      {user ? (
+        <>
+          <span
+            style={{
+              fontSize: 11.5,
+              color: "var(--green-strong)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            ☁ {user.email}
+          </span>
+          <button className="mini" style={{ marginLeft: "auto" }} onClick={() => supabase.auth.signOut()}>
+            Sair
+          </button>
+        </>
+      ) : (
+        <button
+          className="btn center"
+          onClick={() => {
+            setAuthOpen(true);
+            setAuthMsg("");
+          }}
+        >
+          ☁ Entrar / criar conta (salvar na nuvem)
+        </button>
+      )}
+    </div>
+  );
+
+  const spacingHeadland = (
+    <>
+      <label className="field">
+        <span>Espaçamento entre passadas (m)</span>
+        <input className="inp" type="number" value={spacing} min={1} step={0.5} onChange={(e) => setSpacing(Number(e.target.value))} />
+      </label>
+      <label className="field">
+        <span>Cabeceira / headland (m)</span>
+        <input className="inp" type="number" value={headland} min={0} step={1} onChange={(e) => setHeadland(Number(e.target.value))} />
+      </label>
+    </>
+  );
+
+  const economyInputs = (
+    <>
+      <label className="field">
+        <span>Sobreposição típica sem planejar (%)</span>
+        <input className="inp" type="number" value={overlapPct} min={0} step={1} onChange={(e) => setOverlapPct(Number(e.target.value))} />
+      </label>
+      <div className="grid2">
+        <label className="field">
+          <span>Semente (sc/ha)</span>
+          <input className="inp" type="number" value={sacasHa} min={0} step={0.1} onChange={(e) => setSacasHa(Number(e.target.value))} />
+        </label>
+        <label className="field">
+          <span>Preço saca (R$)</span>
+          <input className="inp" type="number" value={precoSaca} min={0} step={10} onChange={(e) => setPrecoSaca(Number(e.target.value))} />
+        </label>
+      </div>
+      <div className="grid2">
+        <label className="field">
+          <span>Defensivo (L/ha)</span>
+          <input className="inp" type="number" value={litrosHa} min={0} step={0.5} onChange={(e) => setLitrosHa(Number(e.target.value))} />
+        </label>
+        <label className="field">
+          <span>Preço litro (R$)</span>
+          <input className="inp" type="number" value={precoLitro} min={0} step={5} onChange={(e) => setPrecoLitro(Number(e.target.value))} />
+        </label>
+      </div>
+    </>
+  );
+
+  const paramsForm = (
+    <div style={{ display: "grid", gap: 10 }}>
+      {spacingHeadland}
+      {economyInputs}
+    </div>
+  );
+
+  const generateBtn = (
+    <button className="btn btn-primary" style={{ marginTop: 6 }} onClick={generate}>
+      ⚙ Gerar linhas
+    </button>
+  );
+
+  // grupo de ferramentas com rótulo (wizard e seções)
+  const fieldGroup = (
+    <>
+      <button className="btn" onClick={() => fileInputRef.current?.click()}>
+        <span className="ic">📥</span> Importar (KML / Shape / GeoJSON)
+      </button>
+      <div className="grid2">
+        <button className={"btn center" + (mode === "field" ? " active" : "")} onClick={startField}>
+          ▱ Desenhar
+        </button>
+        <button className="btn center" onClick={closeField}>
+          ✓ Fechar
+        </button>
+      </div>
+      <button className={"btn" + (mode === "ab" ? " active" : "")} onClick={startAB}>
+        <span className="ic">⟋</span> Definir linha A-B
+      </button>
+      <button className="btn" onClick={suggestBestDirection}>
+        <span className="ic">🧭</span> Sugerir melhor direção
+      </button>
+    </>
+  );
+
+  const advancedGroup = (
+    <>
+      <button className={"btn" + (mode === "curve" ? " active" : "")} onClick={startCurve}>
+        <span className="ic">〰</span> Linha curva / relevo
+      </button>
+      <div className="grid2">
+        <button className={"btn center" + (mode === "obstacle" ? " active" : "")} onClick={startObstacle}>
+          ⛒ Obstáculo
+        </button>
+        <button className="btn center" onClick={closeObstacle}>
+          ✓ Fechar obst.
+        </button>
+      </div>
+      <button className="btn" onClick={undoLast}>
+        <span className="ic">↶</span> Desfazer ponto (Ctrl+Z)
+      </button>
+    </>
+  );
+
+  const resultBlock = metrics && (
+    <div style={{ display: "grid", gap: 6 }}>
+      <div className="row">
+        <span className="k">Área do talhão</span>
+        <span className="v">{fmt(metrics.areaHa)} ha</span>
+      </div>
+      <div className="row">
+        <span className="k">Área útil (sem cabeceira)</span>
+        <span className="v">{fmt(metrics.innerHa)} ha</span>
+      </div>
+      <div className="row">
+        <span className="k">Nº de passadas</span>
+        <span className="v">{metrics.passes}</span>
+      </div>
+      <div className="row">
+        <span className="k">Comprimento total</span>
+        <span className="v">{fmt(metrics.totalLenM / 1000, 2)} km</span>
+      </div>
+      <div className="row">
+        <span className="k">Cobertura estimada</span>
+        <span className="v">{fmt(metrics.coberturaHa)} ha</span>
+      </div>
+      <div className="econ">
+        <div className="head">💰 Economia por safra — evitando ~{overlapPct}% de sobreposição</div>
+        {(() => {
+          const areaDesp = metrics.innerHa * (overlapPct / 100);
+          const sementeSacas = areaDesp * sacasHa;
+          const sementeRS = sementeSacas * precoSaca;
+          const defL = areaDesp * litrosHa;
+          const defRS = defL * precoLitro;
+          const totalRS = sementeRS + defRS;
+          return (
+            <>
+              <div className="row">
+                <span className="k">Área poupada</span>
+                <span className="v">{fmt(areaDesp, 2)} ha</span>
+              </div>
+              <div className="row">
+                <span className="k">Semente</span>
+                <span className="v">
+                  {fmt(sementeSacas, 1)} sc · R$ {fmt(sementeRS, 0)}
+                </span>
+              </div>
+              <div className="row">
+                <span className="k">Defensivo</span>
+                <span className="v">
+                  {fmt(defL, 0)} L · R$ {fmt(defRS, 0)}
+                </span>
+              </div>
+              <div className="total">
+                <span className="k">Total economizado</span>
+                <b>R$ {fmt(totalRS, 0)}</b>
+              </div>
+            </>
+          );
+        })()}
+      </div>
+    </div>
+  );
+
+  const exportBlock = metrics && (
+    <div style={{ display: "grid", gap: 8 }}>
+      <button className="btn" onClick={onExportKML}>
+        <span className="ic">⬇</span> KML (visualização)
+      </button>
+      <button className="btn" onClick={onExportShapefile}>
+        <span className="ic">⬇</span> Shapefile (.zip)
+      </button>
+      <button className="btn" onClick={onExportISOXML}>
+        <span className="ic">⬇</span> ISOXML — linha-guia (beta)
+      </button>
+    </div>
+  );
+
+  const fazendasBlock = (
+    <>
+      <div style={{ display: "flex", gap: 6 }}>
+        <input
+          className="inp"
+          style={{ flex: 1 }}
+          placeholder="Nome da nova fazenda"
+          value={fazNome}
+          onChange={(e) => setFazNome(e.target.value)}
+        />
+        <button className="mini" onClick={createFazenda}>
+          + Fazenda
+        </button>
+      </div>
+      {fazendas.length === 0 ? (
+        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
+          Nenhuma fazenda ainda. Crie uma acima.
+        </div>
+      ) : (
+        <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+          {fazendas.map((f) => {
+            const open = activeFazendaId === f.id;
+            return (
+              <div key={f.id} className="faz">
+                <div className="faz-h">
+                  <button className="toggle" onClick={() => setActiveFazendaId(open ? null : f.id)}>
+                    {open ? "▾" : "▸"} {f.nome}{" "}
+                    <span style={{ color: "var(--muted)", fontWeight: 400 }}>({f.talhoes.length})</span>
+                  </button>
+                  <button
+                    className="mini"
+                    onClick={() => {
+                      setRenameTarget({ kind: "fazenda", id: f.id, nome: f.nome });
+                      setRenameText(f.nome);
+                    }}
+                  >
+                    ✎
+                  </button>
+                  <button
+                    className="mini danger"
+                    onClick={() => {
+                      setDeleteTarget({ kind: "fazenda", id: f.id, nome: f.nome });
+                      setConfirmText("");
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+                {open && (
+                  <div style={{ padding: "0 9px 9px", display: "grid", gap: 6 }}>
+                    {f.talhoes.length === 0 && (
+                      <div style={{ fontSize: 12, color: "var(--muted)" }}>Sem talhões ainda.</div>
+                    )}
+                    {f.talhoes.map((t) => (
+                      <div key={t.id} className="tal">
+                        <span
+                          style={{
+                            flex: 1,
+                            fontSize: 12.5,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {t.nome}
+                        </span>
+                        <button className="mini" onClick={() => loadTalhao(t)}>
+                          Abrir
+                        </button>
+                        <button
+                          className="mini"
+                          onClick={() => {
+                            setRenameTarget({ kind: "talhao", id: t.id, nome: t.nome, fazendaId: f.id });
+                            setRenameText(t.nome);
+                          }}
+                        >
+                          ✎
+                        </button>
+                        <button
+                          className="mini danger"
+                          onClick={() => {
+                            setDeleteTarget({ kind: "talhao", id: t.id, nome: t.nome, fazendaId: f.id });
+                            setConfirmText("");
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
+                      <input
+                        className="inp"
+                        style={{ flex: 1, padding: "5px 8px", fontSize: 12.5 }}
+                        placeholder="Nome do talhão"
+                        value={talhaoNome}
+                        onChange={(e) => setTalhaoNome(e.target.value)}
+                      />
+                      <button className="mini" onClick={saveTalhao}>
+                        + Salvar atual
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+
+  // toolbar flutuante (V1)
+  const toolbarEl = layout === "toolbar" && (
+    <div className="toolbar" style={{ left: 368 }}>
+      <button data-tip="Importar talhão" onClick={() => fileInputRef.current?.click()}>
+        📥
+      </button>
+      <button data-tip="Desenhar talhão" className={mode === "field" ? "on" : ""} onClick={startField}>
+        ▱
+      </button>
+      <button data-tip="Fechar talhão" onClick={closeField}>
+        ✓
+      </button>
+      <button data-tip="Linha A-B" className={mode === "ab" ? "on" : ""} onClick={startAB}>
+        ⟋
+      </button>
+      <button data-tip="Melhor direção" onClick={suggestBestDirection}>
+        🧭
+      </button>
+      <button data-tip="Linha curva / relevo" className={mode === "curve" ? "on" : ""} onClick={startCurve}>
+        〰
+      </button>
+      <button data-tip="Obstáculo" className={mode === "obstacle" ? "on" : ""} onClick={startObstacle}>
+        ⛒
+      </button>
+      <button data-tip="Fechar obstáculo" onClick={closeObstacle}>
+        ▣
+      </button>
+      <div className="sep" />
+      <button data-tip="Desfazer (Ctrl+Z)" onClick={undoLast}>
+        ↶
+      </button>
+      <button data-tip="Limpar tudo" onClick={clearAll}>
+        🗑
+      </button>
+    </div>
+  );
+
+  function accSection(idx: number, n: string, title: string, body: React.ReactNode) {
+    const open = openAcc[idx];
+    return (
+      <div className="acc">
+        <div className="acc-h" onClick={() => setOpenAcc((s) => ({ ...s, [idx]: !s[idx] }))}>
+          <span className="n">{n}</span> {title} <span className="chev">{open ? "▾" : "▸"}</span>
+        </div>
+        {open && <div className="acc-b">{body}</div>}
+      </div>
+    );
+  }
+
+  // ===================== ARRANJOS POR LAYOUT =====================
+
+  let panelContent: React.ReactNode;
+
+  if (layout === "toolbar") {
+    panelContent = (
+      <>
+        {fileInput}
+        {header}
+        {authRow}
+        <div className="lbl">Parâmetros & economia</div>
+        {paramsForm}
+        {generateBtn}
+        <button className="btn center" style={{ marginTop: 8 }} onClick={clearAll}>
+          Limpar tudo
+        </button>
+        {metrics && (
+          <>
+            <div className="lbl">Resultado</div>
+            {resultBlock}
+          </>
+        )}
+        {metrics && (
+          <>
+            <div className="lbl">Exportar pro GPS</div>
+            {exportBlock}
+          </>
+        )}
+        <div className="lbl">Minhas fazendas</div>
+        {fazendasBlock}
+        <div className="msg">{msg}</div>
+      </>
+    );
+  } else if (layout === "wizard") {
+    const stepper = (
+      <div className="steps">
+        <div className="step">
+          <div className={"dot" + (step === 0 ? " on" : step > 0 ? " done" : "")}>{step > 0 ? "✓" : "1"}</div>
+          <div className={"stitle " + (step === 0 ? "on" : "off")}>Talhão</div>
+        </div>
+        <div className={"stepbar" + (step >= 1 ? " done" : "")} />
+        <div className="step">
+          <div className={"dot" + (step === 1 ? " on" : step > 1 ? " done" : "")}>{step > 1 ? "✓" : "2"}</div>
+          <div className={"stitle " + (step === 1 ? "on" : "off")}>Linha</div>
+        </div>
+        <div className={"stepbar" + (step >= 2 ? " done" : "")} />
+        <div className="step">
+          <div className={"dot" + (step === 2 ? " on" : "")}>3</div>
+          <div className={"stitle " + (step === 2 ? "on" : "off")}>Plano</div>
+        </div>
+      </div>
+    );
+    panelContent = (
+      <>
+        {fileInput}
+        {header}
+        {authRow}
+        {stepper}
+        <div className="divider" />
+        {step === 0 && (
+          <>
+            <div className="lbl">Passo 1 · Desenhe ou importe o talhão</div>
+            <div style={{ display: "grid", gap: 8 }}>{fieldGroup}</div>
+          </>
+        )}
+        {step === 1 && (
+          <>
+            <div className="lbl">Passo 2 · Direção do plantio</div>
+            <div style={{ display: "grid", gap: 8, marginBottom: 10 }}>
+              <button className={"btn" + (mode === "ab" ? " active" : "")} onClick={startAB}>
+                <span className="ic">⟋</span> Definir linha A-B na mão
+              </button>
+              <button className="btn" onClick={suggestBestDirection}>
+                <span className="ic">🧭</span> Sugerir melhor direção
+              </button>
+              <button className={"btn" + (mode === "curve" ? " active" : "")} onClick={startCurve}>
+                <span className="ic">〰</span> Linha curva / relevo
+              </button>
+            </div>
+            <div style={{ display: "grid", gap: 10 }}>{spacingHeadland}</div>
+          </>
+        )}
+        {step === 2 && (
+          <>
+            <div className="lbl">Passo 3 · Economia & plano</div>
+            <div style={{ display: "grid", gap: 10 }}>{economyInputs}</div>
+            {generateBtn}
+            {metrics && <div style={{ marginTop: 12 }}>{resultBlock}</div>}
+            {metrics && (
+              <>
+                <div className="lbl">Exportar pro GPS</div>
+                {exportBlock}
+              </>
+            )}
+          </>
+        )}
+        <div className="nav">
+          {step > 0 && (
+            <button className="btn center" style={{ flex: 0.6 }} onClick={() => setStep(step - 1)}>
+              ← Voltar
+            </button>
+          )}
+          {step < 2 ? (
+            <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => setStep(step + 1)}>
+              Avançar →
+            </button>
+          ) : (
+            <button className="btn btn-primary" style={{ flex: 1 }} onClick={generate}>
+              ⚙ Gerar linhas
+            </button>
+          )}
+        </div>
+        <div className="msg">{msg}</div>
+        <div className="divider" />
+        <div className="lbl">Minhas fazendas</div>
+        {fazendasBlock}
+      </>
+    );
+  } else {
+    // sections (V3)
+    panelContent = (
+      <>
+        {fileInput}
+        {header}
+        {authRow}
+        {accSection(0, "1", "Talhão", <div style={{ display: "grid", gap: 8 }}>{fieldGroup}</div>)}
+        {accSection(1, "2", "Avançado", <div style={{ display: "grid", gap: 8 }}>{advancedGroup}</div>)}
+        {accSection(
+          2,
+          "3",
+          "Parâmetros & economia",
+          <>
+            {paramsForm}
+            {generateBtn}
+            {metrics && <div style={{ marginTop: 12 }}>{resultBlock}</div>}
+            {metrics && (
+              <>
+                <div className="lbl" style={{ marginTop: 12 }}>
+                  Exportar pro GPS
+                </div>
+                {exportBlock}
+              </>
+            )}
+          </>
+        )}
+        {accSection(3, "4", "Minhas fazendas", fazendasBlock)}
+        <button className="btn center" style={{ marginTop: 10 }} onClick={clearAll}>
+          Limpar tudo
+        </button>
+        <div className="msg">{msg}</div>
+      </>
+    );
+  }
+
+  // ===================== RENDER =====================
+
   return (
     <div style={{ position: "relative", height: "100%", width: "100%" }}>
       <div ref={mapDiv} style={{ position: "absolute", inset: 0 }} />
 
-      <div className="panel">
-        <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 2, letterSpacing: "-0.02em" }}>
-          Agro<span style={{ color: "#ffb24a" }}>Linha</span>
-        </div>
-        <div style={{ fontSize: 11.5, color: "#8a929c", marginBottom: 4 }}>
-          Planejamento de linhas de plantio e pulverização
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 10 }}>
-          {user ? (
-            <>
-              <span
-                style={{
-                  fontSize: 11.5,
-                  color: "#7ee787",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                ☁ {user.email}
-              </span>
-              <button
-                onClick={() => supabase.auth.signOut()}
-                style={{ ...miniBtn, marginLeft: "auto" }}
-              >
-                Sair
-              </button>
-            </>
-          ) : (
-            <button
-              onClick={() => {
-                setAuthOpen(true);
-                setAuthMsg("");
-              }}
-              style={{ ...miniBtn, width: "100%", textAlign: "center" }}
-            >
-              ☁ Entrar / criar conta (salvar na nuvem)
-            </button>
-          )}
-        </div>
-        <div className="section-label" style={{ marginTop: 12 }}>
-          1 · Talhão
-        </div>
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".kml,.geojson,.json,.zip,.shp"
-          style={{ display: "none" }}
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) importFromFile(f);
-            e.target.value = "";
-          }}
-        />
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          style={{ ...btn(false), marginBottom: 8 }}
-        >
-          📥 Importar talhão (KML / Shape / GeoJSON)
-        </button>
-        <div style={{ fontSize: 11, color: "#778", textAlign: "center", margin: "2px 0 8px" }}>
-          — ou desenhe na mão —
-        </div>
-
-        <div style={{ display: "grid", gap: 8 }}>
-          <button onClick={startField} style={btn(mode === "field")}>
-            1 · Desenhar talhão
-          </button>
-          <button onClick={closeField} style={btn(false)}>
-            Fechar talhão
-          </button>
-          <button onClick={startAB} style={btn(mode === "ab")}>
-            2 · Definir linha A-B
-          </button>
-          <button onClick={undoLast} style={btn(false)}>
-            ↶ Desfazer último ponto (Ctrl+Z)
-          </button>
-          <button onClick={suggestBestDirection} style={btn(false)}>
-            🧭 Sugerir melhor direção
-          </button>
-          <button onClick={startObstacle} style={btn(mode === "obstacle")}>
-            🚧 Adicionar obstáculo
-          </button>
-          <button onClick={closeObstacle} style={btn(false)}>
-            Fechar obstáculo
-          </button>
-          <button onClick={startCurve} style={btn(mode === "curve")}>
-            〰️ Linha curva / relevo → Gerar
-          </button>
-        </div>
-
-        <div className="section-label">2 · Parâmetros & economia</div>
-        <div style={{ marginTop: 4, display: "grid", gap: 10 }}>
-          <Field label="Espaçamento entre passadas (m)">
-            <input
-              type="number"
-              value={spacing}
-              min={1}
-              step={0.5}
-              onChange={(e) => setSpacing(Number(e.target.value))}
-              style={inp}
-            />
-          </Field>
-          <Field label="Cabeceira / headland (m)">
-            <input
-              type="number"
-              value={headland}
-              min={0}
-              step={1}
-              onChange={(e) => setHeadland(Number(e.target.value))}
-              style={inp}
-            />
-          </Field>
-          <Field label="Sobreposição típica sem planejar (%)">
-            <input
-              type="number"
-              value={overlapPct}
-              min={0}
-              step={1}
-              onChange={(e) => setOverlapPct(Number(e.target.value))}
-              style={inp}
-            />
-          </Field>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <Field label="Semente (sc/ha)">
-              <input
-                type="number"
-                value={sacasHa}
-                min={0}
-                step={0.1}
-                onChange={(e) => setSacasHa(Number(e.target.value))}
-                style={inp}
-              />
-            </Field>
-            <Field label="Preço saca (R$)">
-              <input
-                type="number"
-                value={precoSaca}
-                min={0}
-                step={10}
-                onChange={(e) => setPrecoSaca(Number(e.target.value))}
-                style={inp}
-              />
-            </Field>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <Field label="Defensivo (L/ha)">
-              <input
-                type="number"
-                value={litrosHa}
-                min={0}
-                step={0.5}
-                onChange={(e) => setLitrosHa(Number(e.target.value))}
-                style={inp}
-              />
-            </Field>
-            <Field label="Preço litro (R$)">
-              <input
-                type="number"
-                value={precoLitro}
-                min={0}
-                step={5}
-                onChange={(e) => setPrecoLitro(Number(e.target.value))}
-                style={inp}
-              />
-            </Field>
-          </div>
-        </div>
-
-        <button
-          onClick={generate}
-          style={{
-            ...btn(false),
-            marginTop: 14,
-            background: "#ffb24a",
-            color: "#1a1a1a",
-            fontWeight: 700,
-          }}
-        >
-          ⚙ Gerar linhas
-        </button>
-        <button onClick={clearAll} style={{ ...btn(false), marginTop: 8 }}>
-          Limpar tudo
-        </button>
-
-        {metrics && (
-          <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-            <div style={{ fontSize: 12, color: "#9aa" }}>Exportar pro GPS:</div>
-            <button onClick={onExportKML} style={btn(false)}>
-              ⬇ Exportar KML (visualização)
-            </button>
-            <button onClick={onExportShapefile} style={btn(false)}>
-              ⬇ Exportar Shapefile (.zip)
-            </button>
-            <button onClick={onExportISOXML} style={btn(false)}>
-              ⬇ Exportar ISOXML — linha-guia (beta)
-            </button>
-          </div>
-        )}
-
-        <div style={{ marginTop: 16, borderTop: "1px solid #333", paddingTop: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-            🗂️ Minhas fazendas
-          </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <input
-              placeholder="Nome da nova fazenda"
-              value={fazNome}
-              onChange={(e) => setFazNome(e.target.value)}
-              style={{ ...inp, flex: 1 }}
-            />
-            <button
-              onClick={createFazenda}
-              style={{ ...btn(false), width: "auto", padding: "7px 12px" }}
-            >
-              + Fazenda
-            </button>
-          </div>
-
-          {fazendas.length === 0 ? (
-            <div style={{ fontSize: 12, color: "#778", marginTop: 8 }}>
-              Nenhuma fazenda ainda. Crie uma acima.
-            </div>
-          ) : (
-            <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
-              {fazendas.map((f) => {
-                const open = activeFazendaId === f.id;
-                return (
-                  <div
-                    key={f.id}
-                    style={{ background: "#1b1e24", borderRadius: 8, overflow: "hidden" }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        padding: "7px 9px",
-                      }}
-                    >
-                      <button
-                        onClick={() => setActiveFazendaId(open ? null : f.id)}
-                        style={{
-                          flex: 1,
-                          textAlign: "left",
-                          background: "none",
-                          border: "none",
-                          color: "#eaeaea",
-                          cursor: "pointer",
-                          fontSize: 13.5,
-                          fontWeight: 600,
-                        }}
-                      >
-                        {open ? "▾" : "▸"} {f.nome}{" "}
-                        <span style={{ color: "#778", fontWeight: 400 }}>
-                          ({f.talhoes.length})
-                        </span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setRenameTarget({ kind: "fazenda", id: f.id, nome: f.nome });
-                          setRenameText(f.nome);
-                        }}
-                        style={miniBtn}
-                      >
-                        ✎
-                      </button>
-                      <button
-                        onClick={() => {
-                          setDeleteTarget({ kind: "fazenda", id: f.id, nome: f.nome });
-                          setConfirmText("");
-                        }}
-                        style={{ ...miniBtn, color: "#ff7a7a" }}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                    {open && (
-                      <div style={{ padding: "0 9px 9px", display: "grid", gap: 6 }}>
-                        {f.talhoes.length === 0 && (
-                          <div style={{ fontSize: 12, color: "#778" }}>
-                            Sem talhões ainda.
-                          </div>
-                        )}
-                        {f.talhoes.map((t) => (
-                          <div
-                            key={t.id}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 6,
-                              background: "#23262d",
-                              borderRadius: 6,
-                              padding: "5px 7px",
-                            }}
-                          >
-                            <span
-                              style={{
-                                flex: 1,
-                                fontSize: 12.5,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              {t.nome}
-                            </span>
-                            <button onClick={() => loadTalhao(t)} style={miniBtn}>
-                              Abrir
-                            </button>
-                            <button
-                              onClick={() => {
-                                setRenameTarget({
-                                  kind: "talhao",
-                                  id: t.id,
-                                  nome: t.nome,
-                                  fazendaId: f.id,
-                                });
-                                setRenameText(t.nome);
-                              }}
-                              style={miniBtn}
-                            >
-                              ✎
-                            </button>
-                            <button
-                              onClick={() => {
-                                setDeleteTarget({
-                                  kind: "talhao",
-                                  id: t.id,
-                                  nome: t.nome,
-                                  fazendaId: f.id,
-                                });
-                                setConfirmText("");
-                              }}
-                              style={{ ...miniBtn, color: "#ff7a7a" }}
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        ))}
-                        <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
-                          <input
-                            placeholder="Nome do talhão"
-                            value={talhaoNome}
-                            onChange={(e) => setTalhaoNome(e.target.value)}
-                            style={{ ...inp, flex: 1, padding: "5px 8px", fontSize: 12.5 }}
-                          />
-                          <button
-                            onClick={saveTalhao}
-                            style={{ ...miniBtn, background: "#2c3340" }}
-                          >
-                            + Salvar atual
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div
-          style={{
-            marginTop: 12,
-            fontSize: 12.5,
-            color: "#ffd9a3",
-            minHeight: 18,
-          }}
-        >
-          {msg}
-        </div>
-
-        {metrics && (
-          <div
-            style={{
-              marginTop: 14,
-              borderTop: "1px solid #333",
-              paddingTop: 12,
-              display: "grid",
-              gap: 6,
-              fontSize: 13.5,
-            }}
-          >
-            <Row k="Área do talhão" v={`${fmt(metrics.areaHa)} ha`} />
-            <Row k="Área útil (sem cabeceira)" v={`${fmt(metrics.innerHa)} ha`} />
-            <Row k="Nº de passadas" v={`${metrics.passes}`} />
-            <Row k="Comprimento total" v={`${fmt(metrics.totalLenM / 1000, 2)} km`} />
-            <Row k="Cobertura estimada" v={`${fmt(metrics.coberturaHa)} ha`} />
-            <div
-              style={{
-                marginTop: 8,
-                paddingTop: 10,
-                borderTop: "1px dashed #333",
-                fontSize: 12,
-                color: "#9aa",
-              }}
-            >
-              💰 Economia por safra — evitando ~{overlapPct}% de sobreposição:
-            </div>
-            {(() => {
-              const areaDesp = metrics.innerHa * (overlapPct / 100);
-              const sementeSacas = areaDesp * sacasHa;
-              const sementeRS = sementeSacas * precoSaca;
-              const defL = areaDesp * litrosHa;
-              const defRS = defL * precoLitro;
-              const totalRS = sementeRS + defRS;
-              return (
-                <>
-                  <Row k="Área poupada" v={`${fmt(areaDesp, 2)} ha`} />
-                  <Row
-                    k="Semente"
-                    v={`${fmt(sementeSacas, 1)} sc · R$ ${fmt(sementeRS, 0)}`}
-                  />
-                  <Row
-                    k="Defensivo"
-                    v={`${fmt(defL, 0)} L · R$ ${fmt(defRS, 0)}`}
-                  />
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      marginTop: 4,
-                      fontSize: 15,
-                    }}
-                  >
-                    <span style={{ color: "#9aa" }}>Total economizado</span>
-                    <span style={{ fontWeight: 800, color: "#46c46a" }}>
-                      R$ {fmt(totalRS, 0)}
-                    </span>
-                  </div>
-                </>
-              );
-            })()}
-          </div>
-        )}
-      </div>
+      {toolbarEl}
+      <div className="panel">{panelContent}</div>
 
       {deleteTarget && (
-        <div style={overlayStyle} onClick={() => setDeleteTarget(null)}>
-          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: "#fff" }}>
-              ⚠ Excluir {deleteTarget.kind === "fazenda" ? "fazenda" : "talhão"}?
-            </div>
-            <div style={{ fontSize: 13.5, color: "#bcbcc4", marginBottom: 10, lineHeight: 1.5 }}>
+        <div className="overlay" onClick={() => setDeleteTarget(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>⚠ Excluir {deleteTarget.kind === "fazenda" ? "fazenda" : "talhão"}?</h3>
+            <p>
               Essa ação <b>não pode ser desfeita</b>
-              {deleteTarget.kind === "fazenda"
-                ? " e apaga todos os talhões dela"
-                : ""}
-              . Para confirmar, digite o nome exatamente:
-              <div style={{ marginTop: 6, fontFamily: "monospace", color: "#ff9a6a" }}>
+              {deleteTarget.kind === "fazenda" ? " e apaga todos os talhões dela" : ""}. Para confirmar, digite o nome
+              exatamente:
+              <span style={{ display: "block", marginTop: 6, fontFamily: "monospace", color: "var(--amber)" }}>
                 {deleteTarget.nome}
-              </div>
-            </div>
+              </span>
+            </p>
             <input
+              className="inp"
               autoFocus
               value={confirmText}
               onChange={(e) => setConfirmText(e.target.value)}
               placeholder="Digite o nome para confirmar"
-              style={{ ...inp, marginBottom: 12 }}
+              style={{ marginBottom: 12 }}
             />
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <div className="modal-actions">
               <button
+                className="btn center"
+                style={{ width: "auto", padding: "8px 14px" }}
                 onClick={() => {
                   setDeleteTarget(null);
                   setConfirmText("");
                 }}
-                style={{ ...btn(false), width: "auto", padding: "8px 14px" }}
               >
                 Cancelar
               </button>
@@ -1430,15 +1565,12 @@ export default function App() {
                 style={{
                   width: "auto",
                   padding: "8px 16px",
-                  borderRadius: 8,
+                  borderRadius: 10,
                   border: "none",
                   fontWeight: 700,
-                  background:
-                    confirmText.trim() === deleteTarget.nome ? "#e5484d" : "#5a2a2c",
-                  color:
-                    confirmText.trim() === deleteTarget.nome ? "#fff" : "#9a7a7c",
-                  cursor:
-                    confirmText.trim() === deleteTarget.nome ? "pointer" : "not-allowed",
+                  background: confirmText.trim() === deleteTarget.nome ? "var(--danger)" : "#EAD7D5",
+                  color: confirmText.trim() === deleteTarget.nome ? "#fff" : "#B79A98",
+                  cursor: confirmText.trim() === deleteTarget.nome ? "pointer" : "not-allowed",
                 }}
               >
                 Excluir
@@ -1449,41 +1581,33 @@ export default function App() {
       )}
 
       {renameTarget && (
-        <div style={overlayStyle} onClick={() => setRenameTarget(null)}>
-          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 10, color: "#fff" }}>
-              ✎ Renomear {renameTarget.kind === "fazenda" ? "fazenda" : "talhão"}
-            </div>
+        <div className="overlay" onClick={() => setRenameTarget(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>✎ Renomear {renameTarget.kind === "fazenda" ? "fazenda" : "talhão"}</h3>
             <input
+              className="inp"
               autoFocus
               value={renameText}
               onChange={(e) => setRenameText(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && applyRename()}
-              style={{ ...inp, marginBottom: 12 }}
+              style={{ marginBottom: 12 }}
             />
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <div className="modal-actions">
               <button
+                className="btn center"
+                style={{ width: "auto", padding: "8px 14px" }}
                 onClick={() => {
                   setRenameTarget(null);
                   setRenameText("");
                 }}
-                style={{ ...btn(false), width: "auto", padding: "8px 14px" }}
               >
                 Cancelar
               </button>
               <button
+                className="btn btn-primary"
+                style={{ width: "auto", padding: "8px 16px" }}
                 disabled={!renameText.trim()}
                 onClick={applyRename}
-                style={{
-                  width: "auto",
-                  padding: "8px 16px",
-                  borderRadius: 8,
-                  border: "none",
-                  fontWeight: 700,
-                  background: renameText.trim() ? "#ffb24a" : "#5a4a2c",
-                  color: renameText.trim() ? "#1a1a1a" : "#9a8a6c",
-                  cursor: renameText.trim() ? "pointer" : "not-allowed",
-                }}
               >
                 Salvar
               </button>
@@ -1493,60 +1617,32 @@ export default function App() {
       )}
 
       {authOpen && (
-        <div style={overlayStyle} onClick={() => setAuthOpen(false)}>
-          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, color: "#fff" }}>
-              ☁ {authMode === "in" ? "Entrar na nuvem" : "Criar conta"}
-            </div>
-            <div style={{ fontSize: 12, color: "#8a929c", marginBottom: 12 }}>
-              Salve suas fazendas e acesse de qualquer dispositivo.
-            </div>
+        <div className="overlay" onClick={() => setAuthOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>☁ {authMode === "in" ? "Entrar na nuvem" : "Criar conta"}</h3>
+            <p>Salve suas fazendas e acesse de qualquer dispositivo.</p>
             <input
+              className="inp"
               placeholder="seu@email.com"
               value={authEmail}
               onChange={(e) => setAuthEmail(e.target.value)}
-              style={{ ...inp, marginBottom: 8 }}
+              style={{ marginBottom: 8 }}
             />
             <input
+              className="inp"
               type="password"
               placeholder="senha (mín. 6)"
               value={authPass}
               onChange={(e) => setAuthPass(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submitAuth()}
-              style={{ ...inp, marginBottom: 8 }}
+              style={{ marginBottom: 8 }}
             />
-            {authMsg && (
-              <div style={{ fontSize: 12, color: "#ff9a6a", marginBottom: 8 }}>
-                {authMsg}
-              </div>
-            )}
-            <div
-              style={{
-                display: "flex",
-                gap: 8,
-                justifyContent: "space-between",
-                alignItems: "center",
-              }}
-            >
-              <button
-                onClick={() => setAuthMode(authMode === "in" ? "up" : "in")}
-                style={miniBtn}
-              >
+            {authMsg && <div style={{ fontSize: 12, color: "var(--amber)", marginBottom: 8 }}>{authMsg}</div>}
+            <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" }}>
+              <button className="mini" onClick={() => setAuthMode(authMode === "in" ? "up" : "in")}>
                 {authMode === "in" ? "Criar conta" : "Já tenho conta"}
               </button>
-              <button
-                onClick={submitAuth}
-                style={{
-                  width: "auto",
-                  padding: "8px 18px",
-                  borderRadius: 8,
-                  border: "none",
-                  fontWeight: 700,
-                  background: "#ffb24a",
-                  color: "#1a1a1a",
-                  cursor: "pointer",
-                }}
-              >
+              <button className="btn btn-primary" style={{ width: "auto", padding: "8px 18px" }} onClick={submitAuth}>
                 {authMode === "in" ? "Entrar" : "Criar"}
               </button>
             </div>
@@ -1555,121 +1651,39 @@ export default function App() {
       )}
 
       {dupConflict && (
-        <div style={overlayStyle} onClick={() => setDupConflict(null)}>
-          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: "#fff" }}>
-              ⚠ Opa, já existe um talhão aqui!
-            </div>
-            <div style={{ fontSize: 13.5, color: "#bcbcc4", marginBottom: 12, lineHeight: 1.5 }}>
-              O talhão{" "}
-              <b style={{ color: "#ff9a6a" }}>{dupConflict.existingNome}</b> já
-              ocupa essa mesma área. Você não pode ter dois talhões no mesmo lugar.
-            </div>
+        <div className="overlay" onClick={() => setDupConflict(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>⚠ Opa, já existe um talhão aqui!</h3>
+            <p>
+              O talhão <b style={{ color: "var(--amber)" }}>{dupConflict.existingNome}</b> já ocupa essa mesma área.
+              Você não pode ter dois talhões no mesmo lugar.
+            </p>
             <div style={{ display: "grid", gap: 8 }}>
               <button
+                className="btn btn-primary"
                 onClick={() => {
                   updateExistingTalhao(dupConflict.novo, dupConflict.existingId);
                   setDupConflict(null);
-                }}
-                style={{
-                  width: "100%",
-                  padding: "9px",
-                  borderRadius: 8,
-                  border: "none",
-                  fontWeight: 700,
-                  background: "#ffb24a",
-                  color: "#1a1a1a",
-                  cursor: "pointer",
                 }}
               >
                 Atualizar "{dupConflict.existingNome}" com este desenho
               </button>
               <button
+                className="btn center"
                 onClick={() => {
                   doSaveTalhao(dupConflict.novo);
                   setDupConflict(null);
                 }}
-                style={{ ...btn(false), width: "100%", textAlign: "center" }}
               >
                 Salvar como novo mesmo assim
               </button>
-              <button
-                onClick={() => setDupConflict(null)}
-                style={{ ...btn(false), width: "100%", textAlign: "center" }}
-              >
+              <button className="btn center" onClick={() => setDupConflict(null)}>
                 Cancelar
               </button>
             </div>
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function btn(active: boolean): React.CSSProperties {
-  return {
-    width: "100%",
-    padding: "9px 12px",
-    borderRadius: 8,
-    border: "1px solid " + (active ? "#ffb24a" : "#3a3d44"),
-    background: active ? "rgba(255,178,74,0.18)" : "#23262d",
-    color: "#eaeaea",
-    cursor: "pointer",
-    fontSize: 13.5,
-    textAlign: "left",
-  };
-}
-const inp: React.CSSProperties = {
-  width: "100%",
-  padding: "7px 9px",
-  borderRadius: 7,
-  border: "1px solid #3a3d44",
-  background: "#1b1e24",
-  color: "#fff",
-  fontSize: 13.5,
-};
-const miniBtn: React.CSSProperties = {
-  padding: "4px 9px",
-  borderRadius: 6,
-  border: "1px solid #3a3d44",
-  background: "#23262d",
-  color: "#eaeaea",
-  cursor: "pointer",
-  fontSize: 12,
-};
-const overlayStyle: React.CSSProperties = {
-  position: "absolute",
-  inset: 0,
-  background: "rgba(0,0,0,0.55)",
-  display: "grid",
-  placeItems: "center",
-  zIndex: 50,
-  backdropFilter: "blur(2px)",
-};
-const modalStyle: React.CSSProperties = {
-  width: 340,
-  maxWidth: "90%",
-  background: "#1b1e24",
-  border: "1px solid #3a3d44",
-  borderRadius: 12,
-  padding: 18,
-  boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
-};
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: "grid", gap: 4 }}>
-      <span style={{ fontSize: 12, color: "#9aa" }}>{label}</span>
-      {children}
-    </label>
-  );
-}
-function Row({ k, v, warn }: { k: string; v: string; warn?: boolean }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between" }}>
-      <span style={{ color: "#9aa" }}>{k}</span>
-      <span style={{ fontWeight: 600, color: warn ? "#ff9a6a" : "#fff" }}>{v}</span>
     </div>
   );
 }

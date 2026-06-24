@@ -5,26 +5,192 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AgroLinha — Planejador de linhas</title>
     <style>
+      /* ===== AgroLinha — design system (ref КАРТА УРОЖАЯ): claro, verde, cards ===== */
+      :root{
+        --green:#5FA346; --green-strong:#4E8C39; --green-soft:#EAF3E2;
+        --amber:#E2992F; --ink:#2A2E2B; --muted:#8A9089;
+        --line:#ECEDEA; --field-bg:#F4F6F2; --field-border:#E3E7DD;
+        --card:#FFFFFF; --danger:#DB5A4F;
+      }
       * { box-sizing: border-box; }
       html, body, #root { margin: 0; height: 100%; width: 100%; }
-      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+      body {
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        color: var(--ink);
+      }
+
+      /* ---- Card lateral (painel) ---- */
       .panel {
-        position: absolute; top: 12px; left: 12px; width: 320px;
-        max-height: calc(100% - 24px); overflow-y: auto;
-        background: rgba(18,20,24,0.94); color: #eaeaea;
-        border-radius: 14px; padding: 16px;
-        box-shadow: 0 10px 34px rgba(0,0,0,0.45);
-        backdrop-filter: blur(6px);
-        border: 1px solid rgba(255,255,255,0.06);
+        position: absolute; top: 14px; left: 14px; width: 340px;
+        max-height: calc(100% - 28px); overflow-y: auto;
+        background: var(--card); color: var(--ink);
+        border-radius: 20px; padding: 18px;
+        box-shadow: 0 14px 44px rgba(20,40,16,0.20);
+        border: 1px solid rgba(0,0,0,0.05);
       }
       .panel::-webkit-scrollbar { width: 8px; }
-      .panel::-webkit-scrollbar-thumb { background: #3a3d44; border-radius: 8px; }
-      .section-label {
-        font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
-        color: #6f7682; margin: 16px 0 6px; font-weight: 700;
+      .panel::-webkit-scrollbar-thumb { background: #DFE2DC; border-radius: 8px; }
+      .panel::-webkit-scrollbar-track { background: transparent; }
+
+      .logo { font-size: 21px; font-weight: 800; letter-spacing: -0.02em; }
+      .logo b { color: var(--green); font-weight: 800; }
+      .sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+
+      .lbl {
+        font-size: 10px; letter-spacing: 0.09em; text-transform: uppercase;
+        color: var(--green); margin: 16px 0 8px; font-weight: 800;
       }
+      .divider { height: 1px; background: var(--line); margin: 14px 0; }
+
+      /* ---- Botões ---- */
+      .btn {
+        width: 100%; padding: 10px 12px; border-radius: 11px;
+        border: 1px solid var(--field-border); background: #fff; color: var(--ink);
+        font-size: 13px; font-weight: 500; text-align: left; cursor: pointer;
+        display: flex; align-items: center; gap: 8px; transition: all .14s ease;
+        font-family: inherit;
+      }
+      .btn:hover { background: var(--field-bg); border-color: #D6DBD0; }
+      .btn:active { transform: translateY(1px); }
+      .btn .ic { font-size: 15px; line-height: 1; }
+      .btn.active { background: var(--green-soft); border-color: #CFE6BF; color: var(--green-strong); }
+      .btn.center { justify-content: center; text-align: center; }
+      .btn-primary { justify-content: center; text-align: center;
+        background: var(--green); color: #fff; border: none; font-weight: 700; }
+      .btn-primary:hover { background: var(--green-strong); }
+      .btn-danger { color: var(--danger); }
+      .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+      .mini {
+        padding: 5px 10px; border-radius: 8px; border: 1px solid var(--field-border);
+        background: #fff; color: var(--ink); cursor: pointer; font-size: 12px;
+        font-family: inherit; transition: all .14s ease;
+      }
+      .mini:hover { background: var(--field-bg); }
+      .mini.danger { color: var(--danger); }
+
+      /* ---- Inputs ---- */
+      .field { display: grid; gap: 5px; }
+      .field > span { font-size: 11.5px; color: var(--muted); }
+      .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .inp {
+        width: 100%; padding: 9px 11px; border-radius: 10px;
+        border: 1px solid var(--field-border); background: var(--field-bg);
+        color: var(--ink); font-size: 13px; font-family: inherit;
+      }
+      .inp:focus { outline: none; border-color: var(--green); background: #fff; }
+
+      /* ---- Linhas de resultado ---- */
+      .row { display: flex; justify-content: space-between; align-items: baseline; font-size: 13.5px; }
+      .row .k { color: var(--muted); }
+      .row .v { font-weight: 700; }
+      .row .v.warn { color: var(--amber); }
+
+      /* ---- Cartão de economia (destaque) ---- */
+      .econ {
+        background: var(--green-soft); border: 1px solid #D8E8CC;
+        border-radius: 14px; padding: 13px 14px; margin-top: 12px;
+        display: grid; gap: 6px;
+      }
+      .econ .head { font-size: 11.5px; color: #5e7a48; }
+      .econ .total { display: flex; justify-content: space-between; align-items: baseline; margin-top: 4px; }
+      .econ .total b { font-size: 20px; color: var(--green-strong); font-weight: 800; }
+
+      .msg { margin-top: 12px; font-size: 12.5px; color: var(--green-strong); min-height: 18px; }
+
+      /* ---- Toolbar flutuante (V1) ---- */
+      .toolbar {
+        position: absolute; top: 14px; display: flex; flex-direction: column; gap: 5px;
+        background: #fff; border-radius: 14px; padding: 7px;
+        box-shadow: 0 8px 26px rgba(20,40,16,0.18); z-index: 8;
+      }
+      .toolbar button {
+        width: 42px; height: 42px; border: none; border-radius: 10px; background: #fff;
+        cursor: pointer; font-size: 17px; color: #444a40; display: grid; place-items: center;
+        transition: all .14s ease; position: relative;
+      }
+      .toolbar button:hover { background: var(--field-bg); }
+      .toolbar button.on { background: var(--green-soft); color: var(--green-strong); }
+      .toolbar .sep { height: 1px; background: var(--line); margin: 3px 4px; }
+      .toolbar button[data-tip]:hover::after {
+        content: attr(data-tip); position: absolute; left: 52px; top: 50%;
+        transform: translateY(-50%); white-space: nowrap;
+        background: #2A2E2B; color: #fff; font-size: 11.5px; padding: 5px 9px;
+        border-radius: 7px; pointer-events: none; z-index: 20;
+      }
+
+      /* ---- Seletor de layout ---- */
+      .layout-switch {
+        display: inline-flex; gap: 2px; background: var(--field-bg);
+        border: 1px solid var(--field-border); border-radius: 10px; padding: 3px;
+      }
+      .layout-switch button {
+        border: none; background: transparent; cursor: pointer; font-size: 14px;
+        padding: 5px 9px; border-radius: 7px; color: var(--muted); font-family: inherit;
+        transition: all .14s ease;
+      }
+      .layout-switch button.on { background: #fff; color: var(--green-strong);
+        box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+
+      /* ---- Wizard (V2) ---- */
+      .steps { display: flex; align-items: center; margin: 14px 0 4px; }
+      .step { display: flex; align-items: center; gap: 7px; }
+      .dot {
+        width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+        font-size: 12px; font-weight: 800; background: var(--field-bg); color: var(--muted);
+        border: 1.5px solid var(--field-border); flex: none;
+      }
+      .dot.on { background: var(--green); color: #fff; border-color: var(--green); }
+      .dot.done { background: var(--green-soft); color: var(--green-strong); border-color: #CFE6BF; }
+      .stitle { font-size: 11px; font-weight: 700; }
+      .stitle.on { color: var(--ink); } .stitle.off { color: var(--muted); }
+      .stepbar { flex: 1; height: 2px; background: var(--field-border); margin: 0 4px; }
+      .stepbar.done { background: var(--green); }
+      .nav { display: flex; gap: 8px; margin-top: 16px; }
+
+      /* ---- Accordion (V3) ---- */
+      .acc { border: 1px solid var(--line); border-radius: 14px; margin-top: 10px; overflow: hidden; }
+      .acc-h {
+        display: flex; align-items: center; gap: 9px; padding: 12px 13px; cursor: pointer;
+        font-weight: 700; font-size: 13.5px; user-select: none; background: #fff;
+      }
+      .acc-h:hover { background: #FBFCFA; }
+      .acc-h .n {
+        width: 22px; height: 22px; border-radius: 7px; background: var(--green-soft);
+        color: var(--green-strong); display: grid; place-items: center; font-size: 11px; font-weight: 800;
+      }
+      .acc-h .chev { margin-left: auto; color: var(--muted); }
+      .acc-b { padding: 0 13px 13px; display: grid; gap: 8px; }
+
+      /* ---- Fazendas ---- */
+      .faz { background: var(--field-bg); border: 1px solid var(--field-border);
+        border-radius: 10px; overflow: hidden; }
+      .faz-h { display: flex; align-items: center; gap: 6px; padding: 8px 9px; }
+      .faz-h .toggle { flex: 1; text-align: left; background: none; border: none;
+        color: var(--ink); cursor: pointer; font-size: 13.5px; font-weight: 700; font-family: inherit; }
+      .tal { display: flex; align-items: center; gap: 6px; background: #fff;
+        border: 1px solid var(--field-border); border-radius: 8px; padding: 5px 8px; }
+
+      /* ---- Modal ---- */
+      .overlay { position: absolute; inset: 0; background: rgba(30,40,25,0.4);
+        display: grid; place-items: center; z-index: 50; backdrop-filter: blur(2px); }
+      .modal { width: 340px; max-width: 90%; background: #fff; border: 1px solid var(--line);
+        border-radius: 16px; padding: 18px; box-shadow: 0 24px 70px rgba(20,40,16,0.3); }
+      .modal h3 { font-size: 16px; font-weight: 700; margin: 0 0 8px; }
+      .modal p { font-size: 13.5px; color: #5d635a; margin: 0 0 12px; line-height: 1.5; }
+      .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+      /* ---- Controles do MapLibre estilizados ---- */
+      .maplibregl-ctrl-group {
+        border-radius: 11px !important; overflow: hidden;
+        box-shadow: 0 4px 16px rgba(20,40,16,0.18) !important; border: none !important;
+      }
+      .maplibregl-ctrl-group button { width: 36px !important; height: 36px !important; }
+
       @media (max-width: 680px) {
-        .panel { left: 8px; right: 8px; top: 8px; width: auto; max-height: 52%; }
+        .panel { left: 8px; right: 8px; top: 8px; width: auto; max-height: 56%; }
+        .toolbar { flex-direction: row; top: auto; bottom: 14px; left: 50%; transform: translateX(-50%); }
+        .toolbar button[data-tip]:hover::after { display: none; }
       }
     </style>
   </head>
