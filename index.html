@@ -187,9 +187,45 @@
       }
       .maplibregl-ctrl-group button { width: 36px !important; height: 36px !important; }
 
+      /* ---- Handle de arrastar do bottom sheet (só no celular) ---- */
+      .sheet-handle { display: none; }
+
       @media (max-width: 680px) {
-        .panel { left: 8px; right: 8px; top: 8px; width: auto; max-height: 56%; }
-        .toolbar { flex-direction: row; top: auto; bottom: 14px; left: 50%; transform: translateX(-50%); }
+        /* Painel vira bottom sheet colado embaixo, com altura controlada por JS */
+        .panel {
+          left: 0; right: 0; bottom: 0; top: auto;
+          width: auto; max-width: none; max-height: none;
+          padding-top: 0;
+          border-radius: 22px 22px 0 0;
+          box-shadow: 0 -10px 40px rgba(20,40,16,0.22);
+          overscroll-behavior: contain;
+        }
+        .panel.sheet { transition: height .22s cubic-bezier(.22,.61,.36,1); }
+        .panel.sheet.dragging { transition: none; } /* sem lag enquanto arrasta */
+
+        /* esconde a barra de rolagem (vazava no canto arredondado); rola pelo toque */
+        .panel.sheet { scrollbar-width: none; }
+        .panel.sheet::-webkit-scrollbar { display: none; width: 0; }
+
+        /* barra de arrastar fixa no topo do sheet */
+        .sheet-handle {
+          display: block; position: sticky; top: 0; z-index: 6;
+          margin: 0 -18px 6px; padding: 11px 0 7px;
+          background: var(--card); cursor: grab; touch-action: none;
+          border-radius: 22px 22px 0 0;
+        }
+        .sheet-handle:active { cursor: grabbing; }
+        .sheet-handle .grip {
+          width: 42px; height: 5px; border-radius: 99px;
+          background: #D2D7CE; margin: 0 auto;
+        }
+
+        /* toolbar flutuante sobe pro topo pra não ficar atrás do sheet */
+        .toolbar {
+          flex-direction: row; flex-wrap: wrap; justify-content: center;
+          top: 14px; bottom: auto; left: 50%; transform: translateX(-50%);
+          max-width: calc(100% - 16px);
+        }
         .toolbar button[data-tip]:hover::after { display: none; }
       }
     </style>

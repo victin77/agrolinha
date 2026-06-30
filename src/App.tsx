@@ -48,6 +48,12 @@ const EMPTY: any = { type: "FeatureCollection", features: [] };
 type Mode = "idle" | "field" | "ab" | "obstacle" | "curve";
 type Layout = "toolbar" | "wizard" | "sections";
 
+// Pontos de encaixe do bottom sheet no celular (fração da altura da tela)
+const SHEET_PEEK = 0.14; // só o cabeçalho aparecendo
+const SHEET_HALF = 0.5; // metade da tela
+const SHEET_FULL = 0.92; // quase tela cheia
+const SHEET_SNAPS = [SHEET_PEEK, SHEET_HALF, SHEET_FULL];
+
 export default function App() {
   const mapDiv = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -110,6 +116,43 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("agrolinha:layout", layout);
   }, [layout]);
+
+  // ---- Bottom sheet arrastável (celular) ----
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(max-width: 680px)").matches
+  );
+  const [sheet, setSheet] = useState(SHEET_HALF); // fração da altura da tela
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef<{ startY: number; startH: number } | null>(null);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 680px)");
+    const on = () => setIsMobile(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+
+  function onSheetDown(e: React.PointerEvent) {
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dragRef.current = { startY: e.clientY, startH: sheet };
+    setDragging(true);
+  }
+  function onSheetMove(e: React.PointerEvent) {
+    if (!dragRef.current) return;
+    const dy = dragRef.current.startY - e.clientY; // arrastar pra cima = positivo
+    const h = dragRef.current.startH + dy / window.innerHeight;
+    setSheet(Math.max(SHEET_PEEK, Math.min(SHEET_FULL, h)));
+  }
+  function onSheetUp() {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    setDragging(false);
+    // encaixa no ponto mais próximo
+    setSheet((cur) =>
+      SHEET_SNAPS.reduce((a, b) => (Math.abs(b - cur) < Math.abs(a - cur) ? b : a))
+    );
+  }
 
   useEffect(() => {
     if (mapRef.current || !mapDiv.current) return;
@@ -1311,7 +1354,7 @@ export default function App() {
   );
 
   // toolbar flutuante (V1)
-  const toolbarEl = layout === "toolbar" && (
+  const toolbarEl = layout === "toolbar" && !isMobile && (
     <div className="toolbar" style={{ left: 368 }}>
       <button data-tip="Importar talhão" onClick={() => fileInputRef.current?.click()}>
         📥
@@ -1369,6 +1412,15 @@ export default function App() {
         {fileInput}
         {header}
         {authRow}
+        {isMobile && (
+          <>
+            <div className="lbl">Ferramentas</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {fieldGroup}
+              {advancedGroup}
+            </div>
+          </>
+        )}
         <div className="lbl">Parâmetros & economia</div>
         {paramsForm}
         {generateBtn}
@@ -1520,7 +1572,23 @@ export default function App() {
       <div ref={mapDiv} style={{ position: "absolute", inset: 0 }} />
 
       {toolbarEl}
-      <div className="panel">{panelContent}</div>
+      <div
+        className={"panel" + (isMobile ? " sheet" : "") + (dragging ? " dragging" : "")}
+        style={isMobile ? { height: `${sheet * 100}vh` } : undefined}
+      >
+        {isMobile && (
+          <div
+            className="sheet-handle"
+            onPointerDown={onSheetDown}
+            onPointerMove={onSheetMove}
+            onPointerUp={onSheetUp}
+            onPointerCancel={onSheetUp}
+          >
+            <div className="grip" />
+          </div>
+        )}
+        {panelContent}
+      </div>
 
       {deleteTarget && (
         <div className="overlay" onClick={() => setDeleteTarget(null)}>
